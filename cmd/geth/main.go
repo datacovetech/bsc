@@ -200,6 +200,12 @@ var (
 		utils.MetricsInfluxDBPasswordFlag,
 		utils.MetricsInfluxDBTagsFlag,
 	}
+
+	customFlags = []cli.Flag{
+		utils.AggressivePropagationFlag,
+		utils.AddrWhitelistFlag,
+		utils.RedisAddrWhitelistFlag,
+	}
 )
 
 func init() {
@@ -247,6 +253,7 @@ func init() {
 	app.Flags = append(app.Flags, consoleFlags...)
 	app.Flags = append(app.Flags, debug.Flags...)
 	app.Flags = append(app.Flags, metricsFlags...)
+	app.Flags = append(app.Flags, customFlags...)
 
 	app.Before = func(ctx *cli.Context) error {
 		return debug.Setup(ctx)

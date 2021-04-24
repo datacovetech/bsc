@@ -20,6 +20,7 @@ package utils
 import (
 	"crypto/ecdsa"
 	"fmt"
+	mapset "github.com/deckarep/golang-set"
 	"io"
 	"io/ioutil"
 	"math"
@@ -794,6 +795,21 @@ var (
 		Name:  "init.p2p-port",
 		Usage: "the p2p port of the nodes in the network",
 		Value: 30311,
+	}
+
+	// Custom flag
+	AggressivePropagationFlag = cli.BoolFlag{
+		Name:  "ctm.aggprop",
+		Usage: "Aggressively propagate transactions to all peers instead of a subset",
+	}
+	AddrWhitelistFlag = cli.StringFlag{
+		Name:  "ctm.addrwl",
+		Usage: "Sender address whitelist for transaction propagation, separated by comma. If not set, all will pass",
+	}
+	RedisAddrWhitelistFlag = cli.BoolFlag{
+		Name:  "ctm.redisaddrwl",
+		Usage: "If set, will read from redis sender address whitelist at dc_geth:redisaddrwl (in form of a set)," +
+			"taking a union with addrwl",
 	}
 
 	CatalystFlag = cli.BoolFlag{
@@ -1649,6 +1665,27 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 			cfg.EthDiscoveryURLs = SplitAndTrim(urls)
 		}
 	}
+
+	// Custom configs
+	if ctx.GlobalIsSet(AggressivePropagationFlag.Name) {
+		cfg.AggressiveBroadcast = ctx.GlobalBool(AggressivePropagationFlag.Name)
+	}
+	if ctx.GlobalIsSet(AddrWhitelistFlag.Name) {
+		addrs := strings.Split(ctx.GlobalString(AddrWhitelistFlag.Name), ",")
+		wl := mapset.NewSet()
+		for _, addr := range addrs {
+			if !common.IsHexAddress(addr) {
+				Fatalf("Address %v is malformed", addr)
+			}
+			wl.Add(common.HexToAddress(addr))
+		}
+		cfg.AddrWhitelist = wl
+	}
+
+	if ctx.GlobalBool(RedisAddrWhitelistFlag.Name) {
+		cfg.RedisAddrWhitelist = true
+	}
+
 	// Override any default configs for hard coded networks.
 	switch {
 	case ctx.GlobalBool(MainnetFlag.Name):

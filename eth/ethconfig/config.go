@@ -18,6 +18,9 @@
 package ethconfig
 
 import (
+	mapset "github.com/deckarep/golang-set"
+	"github.com/ethereum/go-ethereum/consensus/parlia"
+	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"math/big"
 	"os"
 	"os/user"
@@ -29,12 +32,10 @@ import (
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
-	"github.com/ethereum/go-ethereum/consensus/parlia"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
 	"github.com/ethereum/go-ethereum/ethdb"
-	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/miner"
 	"github.com/ethereum/go-ethereum/node"
@@ -207,7 +208,12 @@ type Config struct {
 	CheckpointOracle *params.CheckpointOracleConfig `toml:",omitempty"`
 
 	// Berlin block override (TODO: remove after the fork)
-	OverrideBerlin *big.Int `toml:",omitempty"`
+	OverrideBerlin      *big.Int `toml:",omitempty"`
+
+	// Custom config
+	AggressiveBroadcast bool
+	AddrWhitelist       mapset.Set
+	RedisAddrWhitelist  bool
 }
 
 // CreateConsensusEngine creates a consensus engine for the given chain configuration.

@@ -1,7 +1,3 @@
-// Copyright 2015 The go-ethereum Authors
-// This file is part of the go-ethereum library.
-//
-// The go-ethereum library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
@@ -18,8 +14,12 @@ package eth
 
 import (
 	"errors"
+	"fmt"
+	mapset "github.com/deckarep/golang-set"
+	"github.com/ethereum/go-ethereum/dc/utils"
 	"math"
 	"math/big"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -44,6 +44,8 @@ const (
 	// txChanSize is the size of channel listening to NewTxsEvent.
 	// The number is referenced from the size of tx pool.
 	txChanSize = 4096
+	redisNs = "dc_geth"
+	redisAddrWlKey = "redisaddrwl"
 )
 
 var (
@@ -71,6 +73,7 @@ type txPool interface {
 	// SubscribeNewTxsEvent should return an event subscription of
 	// NewTxsEvent and send events to the given channel.
 	SubscribeNewTxsEvent(chan<- core.NewTxsEvent) event.Subscription
+	GetSigner() types.Signer
 }
 
 // handlerConfig is the collection of initialization parameters to create a full
@@ -86,6 +89,11 @@ type handlerConfig struct {
 	Checkpoint      *params.TrustedCheckpoint // Hard coded checkpoint for sync challenges
 	Whitelist       map[uint64]common.Hash    // Hard coded whitelist for sync challenged
 	DirectBroadcast bool
+
+	// Custom config
+	AggressiveBroadcast   bool
+	AddrWhitelist         mapset.Set
+	RedisAddrWhitelist    bool
 }
 
 type handler struct {
@@ -125,6 +133,17 @@ type handler struct {
 	chainSync *chainSyncer
 	wg        sync.WaitGroup
 	peerWG    sync.WaitGroup
+
+	// Test fields or hooks
+	broadcastTxAnnouncesOnly bool // Testing field, disable transaction propagation
+
+	// Custom config
+	aggressiveBroadcast   bool
+	addrWhitelist         mapset.Set
+	useRedisAddrWhitelist bool
+	mergedAddrWhitelist   mapset.Set
+	taskHandles           []chan struct{}
+	rp                    *utils.RedisProxy
 }
 
 // newHandler returns a handler for all Ethereum chain management protocol.
@@ -145,6 +164,10 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		directBroadcast: config.DirectBroadcast,
 		txsyncCh:        make(chan *txsync),
 		quitSync:        make(chan struct{}),
+		aggressiveBroadcast:   config.AggressiveBroadcast,
+		addrWhitelist:         config.AddrWhitelist,
+		useRedisAddrWhitelist: config.RedisAddrWhitelist,
+		taskHandles:           []chan struct{}{},
 	}
 	if config.Sync == downloader.FullSync {
 		// The database seems empty as the current block is the genesis. Yet the fast
@@ -233,7 +256,37 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	}
 	h.txFetcher = fetcher.NewTxFetcher(h.txpool.Has, h.txpool.AddRemotes, fetchTx)
 	h.chainSync = newChainSyncer(h)
+	if h.useRedisAddrWhitelist {
+		h.rp = utils.NewRedisProxy(redisNs)
+		h.syncRedisAddrWhitelist()
+		h.taskHandles = append(h.taskHandles, utils.IntervalTask(10 * time.Second,
+			h.syncRedisAddrWhitelist))
+	}
 	return h, nil
+}
+
+func (h *handler) syncRedisAddrWhitelist() {
+	wlArr := h.rp.SMembers(redisAddrWlKey)
+	mergedAddrWhitelist := mapset.NewSet()
+	for _, addrHex := range wlArr {
+		if !common.IsHexAddress(addrHex) {
+			log.Error("Ignored malformed redisaddrwl value %v", addrHex)
+			continue
+		}
+		mergedAddrWhitelist.Add(common.HexToAddress(addrHex))
+	}
+	if h.addrWhitelist != nil {
+		mergedAddrWhitelist = mergedAddrWhitelist.Union(h.addrWhitelist)
+	}
+	if h.mergedAddrWhitelist == nil || !h.mergedAddrWhitelist.Equal(mergedAddrWhitelist) {
+		var hexes []string
+		mergedAddrWhitelist.Each(func(addr interface{}) bool {
+			hexes = append(hexes, addr.(common.Address).Hex())
+			return false
+		})
+		log.Info(fmt.Sprintf("Merged addr whitelist is: [%v]", strings.Join(hexes, ",")))
+	}
+	h.mergedAddrWhitelist = mergedAddrWhitelist
 }
 
 // runEthPeer registers an eth peer into the joint eth/snap peerset, adds it to
@@ -486,8 +539,22 @@ func (h *handler) BroadcastTransactions(txs types.Transactions) {
 	// Broadcast transactions to a batch of peers not knowing about it
 	for _, tx := range txs {
 		peers := h.peers.peersWithoutTransaction(tx.Hash())
-		// Send the tx unconditionally to a subset of our peers
 		numDirect := int(math.Sqrt(float64(len(peers))))
+		var from common.Address
+		var err error
+		inWhitelist := false
+		if h.mergedAddrWhitelist != nil {
+			from, err = types.Sender(h.txpool.GetSigner(), tx)
+			if err != nil {
+				log.Error("Failed to acquire sender from tx")
+				continue
+			}
+			inWhitelist = h.mergedAddrWhitelist.Contains(from)
+			if inWhitelist {
+				numDirect = len(peers)
+				log.Info(fmt.Sprintf("Sending transaction from %v to all %v peers", from.Hex(), numDirect))
+			}
+		}
 		for _, peer := range peers[:numDirect] {
 			txset[peer] = append(txset[peer], tx.Hash())
 		}

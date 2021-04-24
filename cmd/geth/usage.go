@@ -233,6 +233,14 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 		},
 	},
 	{
+		Name: "DC CUSTOM",
+		Flags: []cli.Flag {
+			utils.AggressivePropagationFlag,
+			utils.AddrWhitelistFlag,
+			utils.RedisAddrWhitelistFlag,
+		},
+	},
+	{
 		Name: "MISC",
 		Flags: []cli.Flag{
 			utils.SnapshotFlag,

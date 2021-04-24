@@ -29,6 +29,7 @@ require (
 	github.com/fortytw2/leaktest v1.3.0 // indirect
 	github.com/gballet/go-libpcsclite v0.0.0-20190607065134-2772fd86a8ff
 	github.com/go-ole/go-ole v1.2.1 // indirect
+	github.com/go-redis/redis/v8 v8.8.2
 	github.com/go-sourcemap/sourcemap v2.1.2+incompatible // indirect
 	github.com/go-stack/stack v1.8.0
 	github.com/golang/protobuf v1.4.3
